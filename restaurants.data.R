@@ -100,6 +100,9 @@ restaurants.data <- restaurants.data[restaurants.data$inspection_type!="Inter-Ag
 ##day; replace all scores for any inspection for a given restaurant on a given day by
 ##the maximum score.
 
+  
+  
+
 
 ##Create the sample of data that you will use for prediction as a tibble called
 ##restaurant_data. We will restrict our attention to all initial cycle inspections that took
@@ -125,16 +128,43 @@ cycle_inspections <- subset(restaurant_data, select = c("borough","cuisine","out
 
 
 
+##Add weekday 
+
+restaurant_data <- restaurant_data %>%
+  mutate(weekday = wday(inspection_date, label=TRUE, abbr = FALSE)) %>%
+  mutate(month = month(inspection_date, label=TRUE, abbr = FALSE)) 
+
+
 
 
 ##Perform some feature engineering. We will only create features that could be
 ##known before a given initial cycle inspection takes place
 
-joint_data <- merge(restaurant_data,restaurants.data, by="id")
-joint_data <- filter(joint_data, inspection_date.y < inspection_date.x) 
-joint_data <- joint_data %>% 
-  group_by(joint_data$id)
-joint_data <- joint_data %>%
-  group_by(joint_data$inspection_date.x)
+all_data <- restaurants.data
 
+all_data <- all_data %>% select(c(id, score, action, inspection_date))
+
+restaurant_data <- merge(restaurant_data,all_data, by=c("id"),all.x = TRUE, allow.cartesian=TRUE) 
+restaurant_data <- restaurant_data %>% 
+  filter(joint_data, inspection_date.y < inspection_date.x) %>%
+  group_by_("id","inspection_date.x") %>% 
+  mutate(num_previous_low_inspections = score.y < 14,
+         num_previous_med_inspections = score.y >= 14 & score.y < 28,
+         num_previous_high_inspections = score.y >= 28)
+
+restaurant_data$num_previous_closings <- grepl("closed", restaurant_data$action.y) == TRUE
+
+restaurant_data$num_previous_low_inspections[is.na(restaurant_data$num_previous_low_inspections)] <- 0
+restaurant_data$num_previous_med_inspections[is.na(restaurant_data$num_previous_med_inspections)] <- 0
+restaurant_data$num_previous_high_inspections[is.na(restaurant_data$num_previous_high_inspections)] <- 0
+restaurant_data$num_previous_closings[is.na(restaurant_data$num_previous_closings)] <- 0
+
+top50 <- restaurant_data %>%
+  group_by(cuisine)%>%
+  arrange(desc(n))
+
+top50 <- top50[1:50,]
+
+restaurant_data <- restaurant_data %>%
+  filter (cuisine %in% top50)
 
