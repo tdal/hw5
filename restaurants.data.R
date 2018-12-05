@@ -48,6 +48,14 @@ names(restaurants.data)[names(restaurants.data)=="INSPECTION DATE"] <- "inspecti
 names(restaurants.data)[names(restaurants.data)=="INSPECTION YEAR"] <- "inspection_year"
 
 
+sum(is.na(restaurants.data$borough))
+table(restaurants.data$borough) # 64 values missing
+sum(is.na(all_data$inspection_type)) # 1193 values missing missing
+sum(is.na(all_data$score)) # 19548 missing
+table(all_data$score) # 94 negative values, what about 0?
+restaurants.data <- restaurants.data %>% filter(!borough %in% "Missing", 
+                                                !is.na(score))       
+
 ##rename the values in the
 ##‘action’ and ‘inspection_type’ column with shorter, simpler values.
 
@@ -100,7 +108,9 @@ restaurants.data <- restaurants.data[restaurants.data$inspection_type!="Inter-Ag
 ##day; replace all scores for any inspection for a given restaurant on a given day by
 ##the maximum score.
 
-  
+new_max <- restaurants.data %>% group_by(inspection_date, id) %>% summarise(max(score))  
+joint <- inner_join(restaurants.data, new_max, by = c("id", "inspection_date")) %>% select(-"max(score)")
+restaurants.data <- joint
   
 
 
@@ -161,14 +171,16 @@ restaurant_data$num_previous_closings[is.na(restaurant_data$num_previous_closing
 
 ##Restrict to Top 50 cuisines 
 
-top50 <- restaurant_data %>%
-  group_by(cuisine)%>%
+top.50 <- restaurant_data %>%
+  group_by(cuisine) %>% 
+  count(cuisine) %>% 
   arrange(desc(n))
-
-top50 <- top50[1:50,]
-
-restaurant_data <- restaurant_data %>%
-  filter (cuisine %in% top50)
+top.50 <- top.50[1:50,]
+# save as vector
+top.50 <- as.vector(top.50$cuisine)
+# filter to top 50 cuisines
+restaurant_data <- restaurant_data %>% 
+   filter(cuisine %in% top.50)
 
 
 ##Create a training set of all initial cycle inspections in 2015 and 2016 (train), and
@@ -191,18 +203,31 @@ cat('the auc score is ', 100*test.perf@y.values[[1]], "\n")
 ##trees, but other settings can have default values. Compute the AUC of this model on the test dataset. How does the AUC of the random forest compare with the AUC of the
 ##logistic regression model?
 
+name <- c('cuisine', 'borough', 'outcome')
+rf.train <- train
+rf.train[,name] <- lapply(rf.train[,name], factor)
+rf.train <- rf.train %>% 
+  mutate(num_previous_low_inspections = as.factor(num_previous_low_inspections),
+         num_previous_med_inspections = as.factor(num_previous_med_inspections),
+         num_previous_high_inspections = as.factor(num_previous_high_inspections),
+         num_previous_closings = as.factor(num_previous_closings))
 
-restaurant.rf <- randomForest(outcome ~ cuisine + borough + month + weekday + 
-                                num_previous_low_inspections +  num_previous_med_inspections + 
-                                num_previous_high_inspections, data = train,  ntree=1000, importance = TRUE)
-                                                                                     
-        
+rf.test <- test %>% select(-predicted.probability)
+rf.test[,name] <- lapply(rf.test[,name], factor)
+rf.test <- rf.test %>% 
+  mutate(num_previous_low_inspections = as.factor(num_previous_low_inspections),
+         num_previous_med_inspections = as.factor(num_previous_med_inspections),
+         num_previous_high_inspections = as.factor(num_previous_high_inspections),
+         num_previous_closings = as.factor(num_previous_closings)) 
 
-test$predicted.probability <- predict(restaurant.rf, newdata = test, type='response') 
-test.pred <- prediction(test$predicted.probability, test$outcome)
-test.perf <- performance(test.pred, "auc")
-cat('the auc score is ', 100*test.perf@y.values[[1]], "\n") 
-
+# Random Forest Model
+rf.restaurant <- randomForest(outcome ~ cuisine + borough + month + weekday + num_previous_closings + num_previous_low_inspections +
+                                num_previous_med_inspections + num_previous_high_inspections, rf.train, ntree = 1000)
+# Calculate AUC Score
+rf.test$predicted.probability <- predict(rf.restaurant, rf.test, type = 'response')
+rf.prediction <- prediction(as.numeric(rf.test$predicted.probability), as.numeric(rf.test$outcome))
+rf.perf <- performance(rf.prediction, 'auc')
+cat('the auc score is ', 100*rf.perf@y.values[[1]], "\n") 
 
 ##Generate a precision plot that compares the performance of the logistic
 ##regression and random forest models on just the highest ranked inspections.
